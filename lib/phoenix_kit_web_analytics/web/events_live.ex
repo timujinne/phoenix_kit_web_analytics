@@ -79,6 +79,9 @@ defmodule PhoenixKitWebAnalytics.Web.EventsLive do
     filter =
       Reports.filter(
         period: socket.assigns.period,
+        # The days of a custom range; ignored under every other period.
+        from: socket.assigns.from_date,
+        to: socket.assigns.to_date,
         site: socket.assigns.site,
         path: socket.assigns.path,
         flagged: socket.assigns.filter.flagged,
@@ -100,6 +103,8 @@ defmodule PhoenixKitWebAnalytics.Web.EventsLive do
     <div class="mx-auto max-w-6xl space-y-6 px-4 py-6">
       <.top_row
         period={@period}
+        from={@from_date}
+        to={@to_date}
         site={@site}
         sites={@sites}
         path={@path}

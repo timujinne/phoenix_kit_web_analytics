@@ -59,6 +59,8 @@ defmodule PhoenixKitWebAnalytics.Web.SourcesLive do
     <div class="mx-auto max-w-6xl space-y-6 px-4 py-6">
       <.top_row
         period={@period}
+        from={@from_date}
+        to={@to_date}
         site={@site}
         sites={@sites}
         path={@path}

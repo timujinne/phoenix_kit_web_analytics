@@ -74,6 +74,12 @@ Under **Web Analytics** in the PhoenixKit sidebar:
 | Rate limits | The installed rate-limit rules, what each allowed and refused on this server, and the latest refusals |
 | Settings | Collection rules, bot detection, retention, interaction and client-script switches, session recordings, alerts, stored-data stats, installation checklist |
 
+Overview, Sessions, Pages, Acquisition, Technology and Events take a period: today, yesterday, the last 7, 14, 30 or 90 days,
+the last 12 months, all time, or a **custom range** — its first and last day
+are picked in two date fields (core's `date_input`) and kept in the URL
+(`?period=custom&from=2026-03-01&to=2026-03-10`). A range longer than 92 days
+is charted by month.
+
 Charts are core's server-rendered SVG components — no charting library, no
 JavaScript in the admin either.
 
@@ -314,6 +320,8 @@ wrong lets the request through. See `PhoenixKitWebAnalytics.RateLimit`.
 import PhoenixKitWebAnalytics.Reports
 
 filter = filter(period: "30d")
+# or a range of days, both included:
+# filter(period: "custom", from: ~D[2026-03-01], to: ~D[2026-03-10])
 
 overview(filter)
 #=> %{pageviews: 18_204, visitors: 6_133, sessions: 7_802, bounce_rate: 41.2, …}

@@ -22,9 +22,11 @@ defmodule PhoenixKitWebAnalytics.Web.Filters do
   alias PhoenixKitWebAnalytics.TrafficFlags
 
   @doc """
-  Reads `period`, `site`, `path`, `flagged` and `bots` from the URL params
-  and assigns `:filter`, `:period`, `:site`, `:path`, `:sites`, and
-  `:bucket`.
+  Reads `period`, `from`, `to`, `site`, `path`, `flagged` and `bots` from the
+  URL params and assigns `:filter`, `:period`, `:from_date`, `:to_date`,
+  `:site`, `:path`, `:sites`, and `:bucket`. `from` and `to` are the days of
+  the `custom` period; `:from_date` and `:to_date` are the first and last day
+  of whichever window is shown.
 
   Unknown period values fall back to the default rather than erroring — these
   come from a URL anyone can edit.
@@ -34,18 +36,24 @@ defmodule PhoenixKitWebAnalytics.Web.Filters do
     filter =
       Reports.filter(
         period: params["period"],
+        from: params["from"],
+        to: params["to"],
         site: params["site"],
         path: path_param(params["path"]),
         flagged: switch?(params["flagged"]),
         bots: switch?(params["bots"])
       )
 
+    {from_date, to_date} = Reports.filter_dates(filter)
+
     assign(socket,
       filter: filter,
       period: filter.period,
+      from_date: from_date,
+      to_date: to_date,
       site: filter.site,
       path: filter.path,
-      bucket: Reports.bucket_for(filter.period),
+      bucket: Reports.bucket_for(filter),
       # Scoped to the selected window, not all time: an all-time GROUP BY site
       # would scan the entire events table on every page load, which is the one
       # query on these pages that has no time bound to keep it cheap.
@@ -57,13 +65,20 @@ defmodule PhoenixKitWebAnalytics.Web.Filters do
   @doc """
   Builds the URL to patch to when the filter form changes.
 
-  Empty values are dropped, so the default view has a clean URL.
+  Empty values are dropped, so the default view has a clean URL. `from` and
+  `to` are kept only for the `custom` period — the filter form carries the
+  shown window's days under every period, so that choosing "Custom range"
+  starts from them.
   """
   @spec patch_to(String.t(), map()) :: String.t()
   def patch_to(path, params) do
+    custom? = params["period"] == "custom"
+
     query =
       %{
         "period" => params["period"],
+        "from" => if(custom?, do: date_param(params["from"])),
+        "to" => if(custom?, do: date_param(params["to"])),
         "site" => params["site"],
         "path" => path_param(params["path"]),
         "flagged" => switch_param(params["flagged"]),
@@ -84,8 +99,13 @@ defmodule PhoenixKitWebAnalytics.Web.Filters do
   """
   @spec to_params(Reports.filter()) :: map()
   def to_params(filter) do
+    {from, to} =
+      if filter.period == "custom", do: Reports.filter_dates(filter), else: {nil, nil}
+
     %{
       "period" => filter.period,
+      "from" => date_param(from),
+      "to" => date_param(to),
       "site" => filter.site,
       "path" => filter[:path],
       "flagged" => switch_param(filter[:flagged]),
@@ -148,6 +168,19 @@ defmodule PhoenixKitWebAnalytics.Web.Filters do
   defp switch?(value), do: value in ["1", "true", "on", true]
 
   defp switch_param(value), do: if(switch?(value), do: "1")
+
+  # A day in the URL is ISO 8601; anything unreadable is left out, and the
+  # filter then works the day out (`Reports.custom_range/3`).
+  defp date_param(%Date{} = date), do: Date.to_iso8601(date)
+
+  defp date_param(value) when is_binary(value) do
+    case Date.from_iso8601(value) do
+      {:ok, date} -> Date.to_iso8601(date)
+      _error -> nil
+    end
+  end
+
+  defp date_param(_value), do: nil
 
   # Only an absolute path is a path filter; anything else from the URL is
   # ignored rather than matching nothing.

@@ -225,6 +225,21 @@ defmodule PhoenixKitWebAnalytics.Web.NewPagesTest do
       assert html =~ "Show everyone"
     end
 
+    test "'Show everyone' keeps the filter, a custom range included", %{conn: conn} do
+      user = Ecto.UUID.generate()
+      insert_event(%{session_id: UUIDv7.generate(), user_uuid: user, path: "/mine"})
+
+      query = "period=custom&from=2026-01-01&to=2026-01-05"
+      {:ok, view, _html} = live(conn, "#{@base}/sessions?#{query}&user=#{user}&bots=1")
+
+      view |> element("a", "Show everyone") |> render_click()
+
+      assert_patch(
+        view,
+        "#{@base}/sessions?bots=1&from=2026-01-01&period=custom&to=2026-01-05"
+      )
+    end
+
     test "pages 50 at a time with an 'Older' link and ?before=", %{conn: conn} do
       now = DateTime.utc_now()
 
@@ -459,6 +474,18 @@ defmodule PhoenixKitWebAnalytics.Web.NewPagesTest do
       })
 
       {:ok, session: session}
+    end
+
+    test "a custom range bounds the feed too", %{conn: conn} do
+      insert_event(%{path: "/long-ago", inserted_at: days_ago(20)})
+
+      day = fn back -> Date.utc_today() |> Date.add(-back) |> Date.to_iso8601() end
+
+      {:ok, _view, html} =
+        live(conn, "#{@base}/events?period=custom&from=#{day.(25)}&to=#{day.(15)}")
+
+      assert html =~ "/long-ago"
+      refute html =~ "/viewed"
     end
 
     test "all hits by default, each linking to its session", %{conn: conn, session: session} do

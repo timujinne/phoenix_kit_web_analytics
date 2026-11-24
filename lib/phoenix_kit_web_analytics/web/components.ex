@@ -17,6 +17,7 @@ defmodule PhoenixKitWebAnalytics.Web.Components do
   use Gettext, backend: PhoenixKitWebAnalytics.Gettext
 
   import PhoenixKitWeb.Components.Core.Chart, only: [bar_chart: 1]
+  import PhoenixKitWeb.Components.Core.DateInput, only: [date_input: 1]
   import PhoenixKitWeb.Components.Core.EmptyState
   import PhoenixKitWeb.Components.Core.Icon
   import PhoenixKitWeb.Components.Core.PopoverPanel
@@ -35,11 +36,18 @@ defmodule PhoenixKitWebAnalytics.Web.Components do
   (the site's own people and networks) and bot traffic. Either reads the
   period from raw events, which retention prunes, so a note says so.
 
-  Emits `phx-change="filter"` with `period`, `site`, `path`, `flagged` and
-  `bots` params.
+  With the "Custom range" period two date fields choose its first and last
+  day (in either order: a reversed pair is swapped). Under every other period
+  the form carries the shown window's days in hidden fields, so that switching
+  to "Custom range" starts from them.
+
+  Emits `phx-change="filter"` with `period`, `from`, `to`, `site`, `path`,
+  `flagged` and `bots` params.
   """
   attr :id, :string, default: "web-analytics-filter"
   attr :period, :string, required: true
+  attr :from, Date, default: nil, doc: "the first day of the shown window"
+  attr :to, Date, default: nil, doc: "the last day of the shown window"
   attr :site, :string, default: nil
   attr :sites, :list, default: []
   attr :path, :string, default: nil, doc: "the active path filter, if any"
@@ -52,6 +60,9 @@ defmodule PhoenixKitWebAnalytics.Web.Components do
     doc: "read from raw events for the switches' sake (theirs, or a setting counting a flag in)"
 
   def filter_bar(assigns) do
+    # Report days are UTC days, so "today" is too.
+    assigns = assign(assigns, :today, Date.utc_today())
+
     ~H"""
     <form id={@id} phx-change="filter" class="flex flex-wrap items-center gap-2">
       <input :if={@path} type="hidden" name="path" value={@path} />
@@ -62,6 +73,37 @@ defmodule PhoenixKitWebAnalytics.Web.Components do
         class="select-sm w-auto"
         aria-label={gettext("Period")}
       />
+      <%= if @period == "custom" do %>
+        <%!-- The dash stays with the first field when the row wraps on a phone. --%>
+        <div class="flex items-center gap-2">
+          <.date_input
+            id={"#{@id}-from"}
+            name="from"
+            value={@from}
+            max={@today}
+            today={@today}
+            size="sm"
+            bare
+            wrapper_class="w-36"
+            aria-label={gettext("First day of the range")}
+          />
+          <span class="text-sm text-base-content/60">–</span>
+        </div>
+        <.date_input
+          id={"#{@id}-to"}
+          name="to"
+          value={@to}
+          max={@today}
+          today={@today}
+          size="sm"
+          bare
+          wrapper_class="w-36"
+          aria-label={gettext("Last day of the range")}
+        />
+      <% else %>
+        <input :if={@from && @period != "all"} type="hidden" name="from" value={@from} />
+        <input :if={@to && @period != "all"} type="hidden" name="to" value={@to} />
+      <% end %>
       <.select
         :if={length(@sites) > 1}
         name="site"
@@ -108,6 +150,8 @@ defmodule PhoenixKitWebAnalytics.Web.Components do
         patch={
           PhoenixKitWebAnalytics.Web.Filters.patch_to(@base_path, %{
             "period" => @period,
+            "from" => @from && Date.to_iso8601(@from),
+            "to" => @to && Date.to_iso8601(@to),
             "site" => @site,
             "flagged" => @flagged,
             "bots" => @bots
@@ -166,6 +210,8 @@ defmodule PhoenixKitWebAnalytics.Web.Components do
   window to choose) and no `live_path`.
   """
   attr :period, :string, default: nil
+  attr :from, Date, default: nil
+  attr :to, Date, default: nil
   attr :site, :string, default: nil
   attr :sites, :list, default: []
   attr :path, :string, default: nil
@@ -182,6 +228,8 @@ defmodule PhoenixKitWebAnalytics.Web.Components do
       <.filter_bar
         :if={@period}
         period={@period}
+        from={@from}
+        to={@to}
         site={@site}
         sites={@sites}
         path={@path}
@@ -833,10 +881,12 @@ defmodule PhoenixKitWebAnalytics.Web.Components do
   def period_label("today"), do: gettext("Today")
   def period_label("yesterday"), do: gettext("Yesterday")
   def period_label("7d"), do: gettext("Last 7 days")
+  def period_label("14d"), do: gettext("Last 14 days")
   def period_label("30d"), do: gettext("Last 30 days")
   def period_label("90d"), do: gettext("Last 90 days")
   def period_label("12m"), do: gettext("Last 12 months")
   def period_label("all"), do: gettext("All time")
+  def period_label("custom"), do: gettext("Custom range")
   def period_label(other), do: to_string(other)
 
   @doc "The label for a stored channel (`referrer_medium`) value."

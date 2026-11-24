@@ -74,6 +74,8 @@ defmodule PhoenixKitWebAnalytics.Web.SessionsLive do
     <div class="mx-auto max-w-6xl space-y-6 px-4 py-6">
       <.top_row
         period={@period}
+        from={@from_date}
+        to={@to_date}
         site={@site}
         sites={@sites}
         path={@path}
@@ -111,7 +113,7 @@ defmodule PhoenixKitWebAnalytics.Web.SessionsLive do
         </:info>
         <:actions :if={@user_uuid}>
           <.link
-            patch={patch_path(%{"period" => @period, "site" => @site})}
+            patch={patch_path(pager_params(@filter, nil))}
             class="btn btn-ghost btn-xs"
           >
             <.icon name="hero-x-mark" class="h-3 w-3" /> {gettext("Show everyone")}

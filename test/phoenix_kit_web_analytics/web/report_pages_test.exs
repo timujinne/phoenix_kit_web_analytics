@@ -146,6 +146,65 @@ defmodule PhoenixKitWebAnalytics.Web.ReportPagesTest do
       assert has_element?(view, "#web-analytics-filter-raw-note")
     end
 
+    test "a custom range shows its date fields and counts only its days", %{conn: conn} do
+      insert_event(%{path: "/inside", inserted_at: days_ago(20)})
+      insert_event(%{path: "/outside", inserted_at: days_ago(2)})
+
+      from = Date.utc_today() |> Date.add(-25) |> Date.to_iso8601()
+      to = Date.utc_today() |> Date.add(-15) |> Date.to_iso8601()
+
+      {:ok, view, html} = live(conn, @base <> "?period=custom&from=#{from}&to=#{to}")
+
+      assert html =~ "/inside"
+      refute html =~ "/outside"
+      assert has_element?(view, "input[type='date'][name='from'][value='#{from}']")
+      assert has_element?(view, "input[type='date'][name='to'][value='#{to}']")
+    end
+
+    test "choosing the custom range starts from the days that were shown", %{conn: conn} do
+      {:ok, view, _html} = live(conn, @base <> "?period=14d")
+
+      to = Date.utc_today()
+      from = Date.add(to, -13)
+
+      assert has_element?(view, "input[type='hidden'][name='from'][value='#{from}']")
+
+      view
+      |> element("form[phx-change='filter']")
+      |> render_change(%{"period" => "custom"})
+
+      assert_patch(view, Paths.dashboard() <> "?from=#{from}&period=custom&to=#{to}")
+    end
+
+    test "changing a day of the custom range patches the URL", %{conn: conn} do
+      {:ok, view, _html} = live(conn, @base <> "?period=custom&from=2026-01-01&to=2026-01-05")
+
+      view
+      |> element("form[phx-change='filter']")
+      |> render_change(%{"period" => "custom", "from" => "2026-01-03", "to" => "2026-01-05"})
+
+      assert_patch(view, Paths.dashboard() <> "?from=2026-01-03&period=custom&to=2026-01-05")
+    end
+
+    test "the days leave the URL with the custom range", %{conn: conn} do
+      {:ok, view, _html} = live(conn, @base <> "?period=custom&from=2026-01-01&to=2026-01-05")
+
+      view
+      |> element("form[phx-change='filter']")
+      |> render_change(%{"period" => "30d", "from" => "2026-01-01", "to" => "2026-01-05"})
+
+      assert_patch(view, Paths.dashboard() <> "?period=30d")
+    end
+
+    test "unreadable days in the URL give a range instead of crashing", %{conn: conn} do
+      assert {:ok, view, _html} = live(conn, @base <> "?period=custom&from=nonsense&to=")
+
+      assert has_element?(
+               view,
+               "input[type='date'][name='to'][value='#{Date.utc_today()}']"
+             )
+    end
+
     test "an unknown period in the URL falls back instead of crashing", %{conn: conn} do
       assert {:ok, _view, html} = live(conn, @base <> "?period=nonsense")
       assert html =~ "Last 7 days"

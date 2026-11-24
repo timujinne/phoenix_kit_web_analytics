@@ -117,11 +117,19 @@ defmodule PhoenixKitWebAnalytics.Reports do
     {"today", "Today"},
     {"yesterday", "Yesterday"},
     {"7d", "Last 7 days"},
+    {"14d", "Last 14 days"},
     {"30d", "Last 30 days"},
     {"90d", "Last 90 days"},
     {"12m", "Last 12 months"},
-    {"all", "All time"}
+    {"all", "All time"},
+    {"custom", "Custom range"}
   ]
+
+  # A custom range can't start before this: it arrives from a URL anyone can
+  # edit, and a chart from year 1 would be thousands of empty buckets.
+  @earliest_custom_date ~D[2000-01-01]
+  # A custom range longer than this is charted by month, like "12m".
+  @max_daily_buckets 92
 
   @doc "The selectable periods as `{value, label}` pairs, for the UI."
   @spec periods() :: [{String.t(), String.t()}]
@@ -144,6 +152,9 @@ defmodule PhoenixKitWebAnalytics.Reports do
 
     * `:period` — one of `periods/0`'s values; an unknown value falls back to
       the default rather than raising, since it arrives from a query parameter
+    * `:from`, `:to` — the first and last day of the `"custom"` period, each a
+      `Date` or an ISO 8601 string (see `custom_range/3`); ignored for every
+      other period
     * `:site`, `:path` — optional restrictions
     * `:bots` — include automated traffic (default `false`)
     * `:flagged` — include the traffic the settings leave out (the site's
@@ -157,7 +168,7 @@ defmodule PhoenixKitWebAnalytics.Reports do
   def filter(opts \\ []) do
     period = normalize_period(Keyword.get(opts, :period))
     now = Keyword.get(opts, :now) || DateTime.utc_now()
-    {from, to} = period_range(period, now)
+    {from, to} = filter_window(period, opts, now)
     flagged? = Keyword.get(opts, :flagged, false) == true
 
     %{
@@ -199,11 +210,82 @@ defmodule PhoenixKitWebAnalytics.Reports do
     window(period, DateTime.to_date(now))
   end
 
+  @doc """
+  The first and last day of a `"custom"` period, both included, from what the
+  URL gave — each a `Date`, an ISO 8601 string, or anything else for "not
+  given".
+
+  The values come from a URL anyone can edit, so every input gives a range
+  rather than an error: a missing or unreadable last day is today, a missing
+  or unreadable first day is six days before the last (a week), a reversed
+  pair is swapped, and both are kept between 2000-01-01 and today.
+
+      iex> PhoenixKitWebAnalytics.Reports.custom_range("2026-03-01", "2026-03-10", ~D[2026-04-01])
+      {~D[2026-03-01], ~D[2026-03-10]}
+
+      iex> PhoenixKitWebAnalytics.Reports.custom_range("2026-03-10", "2026-03-01", ~D[2026-04-01])
+      {~D[2026-03-01], ~D[2026-03-10]}
+
+      iex> PhoenixKitWebAnalytics.Reports.custom_range(nil, "nonsense", ~D[2026-04-01])
+      {~D[2026-03-26], ~D[2026-04-01]}
+  """
+  @spec custom_range(term(), term(), Date.t() | nil) :: {Date.t(), Date.t()}
+  def custom_range(from, to, today \\ nil) do
+    today = today || Date.utc_today()
+    last = clamp_date(to_date(to) || today, today)
+    first = clamp_date(to_date(from) || Date.add(last, -6), today)
+
+    if Date.compare(first, last) == :gt, do: {last, first}, else: {first, last}
+  end
+
+  @doc """
+  The first and last day a filter's window covers, both included — what the
+  date fields of a custom range show.
+
+      iex> filter = PhoenixKitWebAnalytics.Reports.filter(period: "7d", now: ~U[2026-03-10 09:00:00Z])
+      iex> PhoenixKitWebAnalytics.Reports.filter_dates(filter)
+      {~D[2026-03-04], ~D[2026-03-10]}
+  """
+  @spec filter_dates(%{:from => DateTime.t(), :to => DateTime.t(), optional(any()) => any()}) ::
+          {Date.t(), Date.t()}
+  def filter_dates(%{from: from, to: to}) do
+    {DateTime.to_date(from), to |> DateTime.add(-1, :second) |> DateTime.to_date()}
+  end
+
+  defp filter_window("custom", opts, now) do
+    {first, last} =
+      custom_range(Keyword.get(opts, :from), Keyword.get(opts, :to), DateTime.to_date(now))
+
+    {start_of_day(first), start_of_day(Date.add(last, 1))}
+  end
+
+  defp filter_window(period, _opts, now), do: period_range(period, now)
+
+  defp to_date(%Date{} = date), do: date
+
+  defp to_date(value) when is_binary(value) do
+    case Date.from_iso8601(value) do
+      {:ok, date} -> date
+      _error -> nil
+    end
+  end
+
+  defp to_date(_value), do: nil
+
+  defp clamp_date(date, today) do
+    cond do
+      Date.compare(date, @earliest_custom_date) == :lt -> @earliest_custom_date
+      Date.compare(date, today) == :gt -> today
+      true -> date
+    end
+  end
+
   # Every window except "yesterday" ends at tomorrow's start, so a report always
   # includes what happened today.
   defp window("today", today), do: {start_of_day(today), end_of_today(today)}
   defp window("yesterday", today), do: {start_of_day(Date.add(today, -1)), start_of_day(today)}
   defp window("7d", today), do: trailing_days(today, 6)
+  defp window("14d", today), do: trailing_days(today, 13)
   defp window("30d", today), do: trailing_days(today, 29)
   defp window("90d", today), do: trailing_days(today, 89)
   defp window("12m", today), do: trailing_days(today, 364)
@@ -219,9 +301,16 @@ defmodule PhoenixKitWebAnalytics.Reports do
   The bucket size a period should be charted at.
 
   Short windows get hourly points; a year gets monthly ones, so the chart never
-  tries to draw 365 bars.
+  tries to draw 365 bars. Pass the filter rather than its period label where
+  there is one: a custom range is charted by its length — by day up to
+  #{@max_daily_buckets} days, by month beyond.
   """
-  @spec bucket_for(String.t()) :: :hour | :day | :month
+  @spec bucket_for(String.t() | filter()) :: :hour | :day | :month
+  def bucket_for(%{period: "custom", from: from, to: to}) do
+    if DateTime.diff(to, from, :day) > @max_daily_buckets, do: :month, else: :day
+  end
+
+  def bucket_for(%{period: period}), do: bucket_for(period)
   def bucket_for(period) when period in ["today", "yesterday"], do: :hour
   def bucket_for(period) when period in ["12m", "all"], do: :month
   def bucket_for(_period), do: :day
